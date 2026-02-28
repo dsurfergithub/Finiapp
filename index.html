@@ -448,7 +448,12 @@ body::before{content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;
     </div>
   </div>
   <div class="sec-lbl" style="padding:14px 20px 0">Datos</div>
-  <div class="mi" onclick="exportCSV()"><div class="mi-ico" style="background:rgba(61,107,79,.12)">📤</div><div><div class="mi-name">Exportar CSV</div><div class="mi-desc">Descarga tu historial</div></div><div class="mi-chev">›</div></div>
+  <div class="mi" onclick="exportCSV()"><div class="mi-ico" style="background:rgba(61,107,79,.12)">📤</div><div><div class="mi-name">Exportar CSV</div><div class="mi-desc">Descarga transacciones como CSV</div></div><div class="mi-chev">›</div></div>
+  <div class="div"></div>
+  <div class="mi" onclick="exportFullBackup()"><div class="mi-ico" style="background:rgba(61,107,79,.12)">💾</div><div><div class="mi-name">Exportar copia completa</div><div class="mi-desc">JSON con todos tus datos</div></div><div class="mi-chev">›</div></div>
+  <div class="div"></div>
+  <div class="mi" onclick="triggerImport()"><div class="mi-ico" style="background:rgba(44,95,122,.12)">📥</div><div><div class="mi-name">Importar datos</div><div class="mi-desc">Desde CSV o copia de seguridad JSON</div></div><div class="mi-chev">›</div></div>
+  <input type="file" id="import-file" accept=".csv,.json" style="display:none" onchange="handleImport(event)">
   <div class="div"></div>
   <div class="mi" onclick="clearData()"><div class="mi-ico" style="background:rgba(168,66,63,.1)">🗑</div><div><div class="mi-name">Borrar todos los datos</div><div class="mi-desc">Acción irreversible</div></div><div class="mi-chev">›</div></div>
   <div style="height:16px"></div>
@@ -685,7 +690,27 @@ const FREQS={monthly:'Mensual',yearly:'Anual',weekly:'Semanal'};
 // STATE
 // ═══════════════════════════════════════════════════
 function loadS(){
-  try{ const d=JSON.parse(localStorage.getItem('finni2')||'null'); if(d)return d; }catch(e){}
+  try{
+    // Try current key
+    let d=JSON.parse(localStorage.getItem('finni2')||'null');
+    if(d&&d.tx) return d;
+    // Migrate from previous version (finni_v1 used 'transactions' field)
+    let old=JSON.parse(localStorage.getItem('finni_v1')||'null');
+    if(old){
+      const migrated={
+        tx: old.transactions||[],
+        budgets: old.budgets||[],
+        fc: old.forecasts||[],
+        savings: (old.savings||[]).map(s=>({...s,bal:s.balance||s.bal||0,hist:s.history||s.hist||[],incl:s.includeInPatrimony||s.incl||false})),
+        goals: old.goals||[],
+        recurring: old.recurring||[],
+        theme: old.theme||'light',
+        acc: old.accent?{h:old.accent.hex,r:old.accent.rgb?parseInt(old.accent.rgb.split(',')[0]):201,g:old.accent.rgb?parseInt(old.accent.rgb.split(',')[1]):150,b:old.accent.rgb?parseInt(old.accent.rgb.split(',')[2]):58}:{h:'#c9963a',r:201,g:150,b:58}
+      };
+      localStorage.setItem('finni2',JSON.stringify(migrated));
+      return migrated;
+    }
+  }catch(e){}
   return {tx:[],budgets:[],fc:[],savings:[],goals:[],recurring:[],theme:'light',acc:{h:'#c9963a',r:201,g:150,b:58}};
 }
 let S=loadS();
@@ -1141,7 +1166,7 @@ function rHero(){
   const inc=mTx.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
   const exp=mTx.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
   const savBal=S.savings.filter(s=>s.incl).reduce((s,sv)=>s+sv.bal,0);
-  const bal=S.tx.reduce((s,t)=>s+t.amount,0)+savBal;
+  const bal=(S.tx||[]).reduce((s,t)=>s+t.amount,0)+savBal;
   document.getElementById('hbal').textContent=fmtP(bal);
   document.getElementById('hinc').textContent=fmt(inc);
   document.getElementById('hexp').textContent=fmt(exp);
@@ -1391,10 +1416,127 @@ function processRecurring(){
 // EXPORT / CLEAR
 // ═══════════════════════════════════════════════════
 function exportCSV(){
-  const rows=S.tx.map(t=>[t.date,`"${t.desc}"`,catOf(t.cat).name,t.amount<0?'Gasto':'Ingreso',t.amount,`"${t.notes||''}"`]);
-  const csv=[['Fecha','Descripción','Categoría','Tipo','Importe','Notas'],...rows].map(r=>r.join(',')).join('\n');
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'}));a.download='finni.csv';a.click();
-  showToast('📤 CSV exportado');
+  if(!S.tx.length){showToast('⚠ Sin transacciones para exportar');return;}
+  const rows=S.tx.map(t=>[
+    t.date,
+    '"'+t.desc.replace(/"/g,'""')+'"',
+    catOf(t.cat).name,
+    t.amount<0?'Gasto':'Ingreso',
+    t.amount.toFixed(2),
+    '"'+(t.notes||'').replace(/"/g,'""')+'"'
+  ]);
+  const csv=[['Fecha','Descripción','Categoría','Tipo','Importe (€)','Notas'],...rows].map(r=>r.join(',')).join('\n');
+  dlFile('\uFEFF'+csv,'finni_transacciones_'+todayStr()+'.csv','text/csv;charset=utf-8');
+  showToast('📤 CSV exportado ('+S.tx.length+' transacciones)');
+}
+function exportFullBackup(){
+  const backup=JSON.stringify(S,null,2);
+  dlFile(backup,'finni_backup_'+todayStr()+'.json','application/json');
+  showToast('💾 Copia completa exportada');
+}
+function dlFile(content,name,type){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([content],{type}));
+  a.download=name; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+function triggerImport(){
+  document.getElementById('import-file').value='';
+  document.getElementById('import-file').click();
+}
+function handleImport(e){
+  const file=e.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const content=ev.target.result;
+    if(file.name.endsWith('.json')) importJSON(content);
+    else importCSV(content);
+  };
+  reader.readAsText(file,'utf-8');
+}
+function importJSON(content){
+  try{
+    const data=JSON.parse(content);
+    // Validate it looks like a Finni backup
+    if(!data.tx && !data.transactions){showToast('⚠ Archivo JSON no reconocido');return;}
+    if(!confirm('¿Reemplazar todos los datos actuales con esta copia de seguridad?')) return;
+    // Support both tx and transactions field names
+    if(data.transactions && !data.tx) data.tx=data.transactions;
+    S=Object.assign({theme:S.theme,acc:S.acc},{
+      tx:data.tx||[],
+      budgets:data.budgets||[],
+      fc:data.fc||data.forecasts||[],
+      savings:(data.savings||[]).map(s=>({...s,bal:s.bal||s.balance||0,hist:s.hist||s.history||[],incl:s.incl||s.includeInPatrimony||false})),
+      goals:data.goals||[],
+      recurring:data.recurring||[]
+    });
+    saveS(); renderPage(U.page);
+    showToast('✅ '+S.tx.length+' transacciones importadas');
+  }catch(err){
+    showToast('⚠ Error al leer el archivo JSON');
+    console.error(err);
+  }
+}
+function importCSV(content){
+  try{
+    // Remove BOM if present
+    const clean=content.replace(/^\uFEFF/,'').replace(/^\xEF\xBB\xBF/,'');
+    const lines=clean.split(/\r?\n/).filter(l=>l.trim());
+    if(lines.length<2){showToast('⚠ CSV vacío o sin datos');return;}
+    // Detect header
+    const header=lines[0].toLowerCase();
+    const hasHeader=header.includes('fecha')||header.includes('date')||header.includes('descripci');
+    const dataLines=hasHeader?lines.slice(1):lines;
+    const imported=[];
+    let errors=0;
+    dataLines.forEach((line,idx)=>{
+      if(!line.trim()) return;
+      // Parse CSV respecting quoted fields
+      const cols=parseCSVLine(line);
+      if(cols.length<4){errors++;return;}
+      const [dateRaw,descRaw,catRaw,typeRaw,amtRaw,notesRaw]=cols;
+      const date=dateRaw.trim();
+      const desc=descRaw.trim();
+      const amt=parseFloat((amtRaw||'0').replace(',','.'));
+      if(!date||!desc||isNaN(amt)){errors++;return;}
+      // Detect category from name
+      const catName=(catRaw||'').toLowerCase();
+      const cat=CATS.find(c=>c.name.toLowerCase()===catName||c.id===catName)||CATS[CATS.length-1];
+      // Detect type
+      const typeStr=(typeRaw||'').toLowerCase();
+      const isExpense=typeStr.includes('gasto')||typeStr.includes('expense')||amt<0;
+      const finalAmt=isExpense?-Math.abs(amt):Math.abs(amt);
+      imported.push({
+        id:uid(),type:isExpense?'expense':'income',
+        amount:finalAmt,desc,cat:cat.id,
+        date,notes:(notesRaw||'').trim(),
+        createdAt:new Date().toISOString()
+      });
+    });
+    if(!imported.length){showToast('⚠ No se encontraron transacciones válidas');return;}
+    const mode=confirm('¿Añadir '+imported.length+' transacciones a las existentes?\n\nOK = Añadir  |  Cancelar = Reemplazar');
+    if(mode) S.tx=[...imported,...S.tx];
+    else S.tx=imported;
+    S.tx.sort((a,b)=>b.date.localeCompare(a.date));
+    saveS(); renderPage(U.page);
+    showToast('✅ '+imported.length+' transacciones importadas'+(errors?' ('+errors+' errores)':''));
+  }catch(err){
+    showToast('⚠ Error al leer el CSV');
+    console.error(err);
+  }
+}
+function parseCSVLine(line){
+  const result=[]; let cur=''; let inQ=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"'){
+      if(inQ&&line[i+1]==='"'){cur+='"';i++;} // escaped quote
+      else inQ=!inQ;
+    } else if(c===','&&!inQ){
+      result.push(cur); cur=''; 
+    } else cur+=c;
+  }
+  result.push(cur);
+  return result;
 }
 function clearData(){
   if(!confirm('¿Borrar todos los datos?'))return;
@@ -1414,7 +1556,7 @@ function showToast(msg){
 // ═══════════════════════════════════════════════════
 // DEMO DATA
 // ═══════════════════════════════════════════════════
-if(!S.tx.length){
+if(!S.tx||!S.tx.length){
   const now=new Date();
   S.tx=[
     {id:'d1',type:'expense',amount:-67.40,desc:'Mercadona',cat:'food',date:todayStr(),notes:'Compra semanal',createdAt:new Date().toISOString()},
