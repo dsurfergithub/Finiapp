@@ -354,7 +354,7 @@ body::before{content:'';position:fixed;inset:0;z-index:1;pointer-events:none;opa
   <div class="hero">
     <div class="hero-orn tl">❧</div>
     <div class="hero-orn br">❧</div>
-    <div class="hero-eye">Disponible este mes</div>
+    <div class="hero-eye" id="hero-eye-lbl">Disponible este mes</div>
     <div class="hero-bal" id="hbal-wrap"><span class="euro">€</span><span id="hbal">0,00</span></div>
     <div style="position:relative;z-index:1;margin:8px 0 14px">
       <div style="background:rgba(240,232,216,.1);border-radius:100px;height:5px;overflow:hidden">
@@ -490,6 +490,18 @@ body::before{content:'';position:fixed;inset:0;z-index:1;pointer-events:none;opa
   <div class="mi" onclick="openMo('mo-goal')"><div class="mi-ico" style="background:rgba(44,95,122,.12)">🏆</div><div><div class="mi-name">Nueva Meta</div><div class="mi-desc">Objetivo de ahorro</div></div><div class="mi-chev">›</div></div>
   <div class="div"></div>
   <div class="mi" onclick="goTo('recurring')"><div class="mi-ico" style="background:rgba(44,95,122,.12)">🔄</div><div><div class="mi-name">Pagos Recurrentes</div><div class="mi-desc">Suscripciones y cargos fijos</div></div><div class="mi-chev">›</div></div>
+  <div class="sec-lbl" style="padding:14px 20px 0">Mes de trabajo</div>
+  <div style="margin:8px 20px;background:var(--surf);border-radius:14px;border:1px solid var(--brd);padding:16px 18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:13px;font-weight:600" id="active-month-lbl">Mes actual</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="rsm-nav-btn" onclick="shiftActiveMonth(-1)">‹</div>
+        <div class="rsm-nav-btn" onclick="shiftActiveMonth(1)">›</div>
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--t3);font-style:italic;margin-bottom:12px">Adelanta el mes para planificar sin esperar al calendario</div>
+    <button class="btn-del" id="btn-reset-month" style="display:none;width:auto;padding:6px 16px;font-size:12px;margin:0" onclick="resetActiveMonth()">↺ Volver al mes real</button>
+  </div>
   <div class="sec-lbl" style="padding:14px 20px 0">Presupuesto mensual</div>
   <div style="margin:8px 20px;background:var(--surf);border-radius:14px;border:1px solid var(--brd);padding:16px 18px">
     <div style="font-size:12px;color:var(--t3);margin-bottom:10px;font-style:italic">¿Cuánto puedes gastar este mes?</div>
@@ -835,7 +847,7 @@ const FREQS={monthly:'Mensual',yearly:'Anual',weekly:'Semanal'};
 // STATE
 // ═══════════════════════════════════════════════════
 function loadS(){
-  const empty={tx:[],accounts:[],budgets:[],fc:[],savings:[],goals:[],recurring:[],theme:'light',acc:{h:'#c9963a',r:201,g:150,b:58},monthlyBudget:0,customCats:[],hiddenCats:[]};
+  const empty={tx:[],accounts:[],budgets:[],fc:[],savings:[],goals:[],recurring:[],theme:'light',acc:{h:'#c9963a',r:201,g:150,b:58},monthlyBudget:0,customCats:[],hiddenCats:[],activeMonth:null,activeYear:null};
   try{
     const raw=localStorage.getItem('finni_v4');
     if(!raw) return empty;
@@ -881,8 +893,19 @@ const allCats=()=>[...CATS,...(S.customCats||[])].filter(c=>!(S.hiddenCats||[]).
 const allCatsUnfiltered=()=>[...CATS,...(S.customCats||[])];
 const catOf=id=>allCatsUnfiltered().find(c=>c.id===id)||CATS[CATS.length-1];
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2);
-const nm=()=>new Date().getMonth();
-const ny=()=>new Date().getFullYear();
+const nm=()=>activeDate().getMonth();
+const ny=()=>activeDate().getFullYear();
+function activeDate(){
+  if(S.activeMonth!=null&&S.activeYear!=null){
+    return new Date(S.activeYear, S.activeMonth, 1);
+  }
+  return new Date();
+}
+function isActiveMonthToday(){
+  const r=new Date();
+  return S.activeMonth==null||
+    (S.activeMonth===r.getMonth()&&S.activeYear===r.getFullYear());
+}
 const fmtDate=ds=>{
   if(!ds||typeof ds!=='string') return '—';
   const clean=ds.slice(0,10);
@@ -946,7 +969,10 @@ function goTo(n){
 function renderPage(n){
   if(n==='home'){rHero();rAlerts();rHomeFc();rHomeTx();}
   else if(n==='analytics') rAnalytics();
-  else if(n==='more'){const inp=document.getElementById('s-monthly-budget');if(inp)inp.value=S.monthlyBudget>0?S.monthlyBudget:'';}
+  else if(n==='more'){
+    const inp=document.getElementById('s-monthly-budget');if(inp)inp.value=S.monthlyBudget>0?S.monthlyBudget:'';
+    updateActiveMonthUI();
+  }
   else if(n==='forecasts') rFcPage();
   else if(n==='budgets') rBudPage();
   else if(n==='recurring') rRecPage();
@@ -1216,9 +1242,10 @@ function toggleRcAuto(){
 function populateFcSels(){
   const ms=document.getElementById('fc-month');
   const ys=document.getElementById('fc-year');
-  ms.innerHTML=MOS.map((m,i)=>`<option value="${i}" ${i===nm()?'selected':''}>${m}</option>`).join('');
-  const y=ny();
-  ys.innerHTML=[y-1,y,y+1].map(v=>`<option value="${v}" ${v===y?'selected':''}>${v}</option>`).join('');
+  const am=activeDate();
+  ms.innerHTML=MOS.map((m,i)=>`<option value="${i}" ${i===am.getMonth()?'selected':''}>${m}</option>`).join('');
+  const y=am.getFullYear();
+  ys.innerHTML=[y-1,y,y+1,y+2].map(v=>`<option value="${v}" ${v===y?'selected':''}>${v}</option>`).join('');
 }
 
 // ═══════════════════════════════════════════════════
@@ -1487,7 +1514,7 @@ function setPer(el,p){
 // RENDER
 // ═══════════════════════════════════════════════════
 function rHero(){
-  const now=new Date();
+  const now=activeDate();
   const base=Number(S.monthlyBudget||0);
 
   // Gastos reales del mes
@@ -1538,6 +1565,17 @@ function rHero(){
   // Render — safe getters to avoid null errors
   const $=id=>{const el=document.getElementById(id);if(!el)console.warn('Missing hero el:',id);return el||{textContent:'',style:{}};};
   const balEl=$('hbal');
+  // Show active month in hero eye label
+  const eyeLbl=document.getElementById('hero-eye-lbl');
+  if(eyeLbl){
+    if(isActiveMonthToday()){
+      eyeLbl.textContent='Disponible este mes';
+      eyeLbl.style.color='';
+    } else {
+      eyeLbl.textContent=`Planificando ${MOS[now.getMonth()]} ${now.getFullYear()}`;
+      eyeLbl.style.color='rgba(240,232,216,.7)';
+    }
+  }
   if(base===0){
     balEl.textContent='—';
     $('htag').textContent='Configura tu presupuesto en Ajustes ⚙';
@@ -1562,7 +1600,7 @@ function rHero(){
   $('hinc').textContent=base>0?fmt(base):'—';
 }
 function getAlerts(){
-  const now=new Date(); const alerts=[];
+  const now=activeDate(); const alerts=[];
   (S.fc||[]).filter(f=>f.month===now.getMonth()&&f.year===now.getFullYear()).forEach(f=>{
     const sp=fcSpent(f); const pct=(sp/f.amount)*100;
     const rem=100-pct; const ap=f.alertPct||20;
@@ -1765,7 +1803,7 @@ function rAlerts(){
 }
 function rHomeFc(){
   const el=document.getElementById('home-fc');
-  const now=new Date();
+  const now=activeDate();
   const act=(S.fc||[]).filter(f=>f.month===now.getMonth()&&f.year===now.getFullYear());
   if(!act.length){
     el.innerHTML=`<div style="margin:0 20px 8px;padding:14px 16px;background:var(--surf2);border-radius:14px;border:1px solid var(--brd);font-size:13px;color:var(--t3);font-style:italic">Sin previsiones para este mes — <span style="color:var(--acc);cursor:pointer;font-style:normal;font-weight:600" onclick="openMo('mo-fc')">Crear una</span></div>`;
@@ -1817,7 +1855,7 @@ function buildAnCatChips(txs){
     +usedCats.map(id=>{const c=catOf(id);return `<div class="chip ${U.anCat===id?'active':''}" onclick="filterAnCat('${id}')" style="${U.anCat===id?'background:'+c.color+';border-color:'+c.color+';color:#fff':''}">${c.icon} ${c.name}</div>`;}).join('');
 }
 function rAnalytics(){
-  const now=new Date(); let txs;
+  const now=activeDate(); let txs;
   if(U.anPer==='month') txs=(S.tx||[]).filter(t=>{const d=new Date(t.date);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();});
   else if(U.anPer==='week'){const ws=new Date(now);ws.setDate(now.getDate()-now.getDay());txs=(S.tx||[]).filter(t=>new Date(t.date)>=ws);}
   else if(U.anPer==='3m'){const s=new Date(now);s.setMonth(s.getMonth()-3);txs=(S.tx||[]).filter(t=>new Date(t.date)>=s);}
@@ -1860,7 +1898,7 @@ function rDonut(txs){
 }
 function rBar(){
   const ch=document.getElementById('barchart');
-  const now=new Date();
+  const now=activeDate();
   let n, getDayStr, getLbl;
   if(U.anPer==='week'){
     n=7;
@@ -1915,7 +1953,7 @@ function rBar(){
     return `<div class="bar-col"><div class="bar" style="height:${h}px;background:${it?'var(--acc)':'var(--bg3)'}"></div><div class="bar-lbl" style="color:${it?'var(--acc)':''}">${visLbs[i]}</div></div>`;}).join('');
 }
 function rHeatmap(){
-  const days=U.anPer==='week'?7:U.anPer==='month'?new Date().getDate():U.anPer==='3m'?90:365;
+  const days=U.anPer==='week'?7:U.anPer==='month'?activeDate().getDate():U.anPer==='3m'?90:365;
   let h='';
   for(let i=days-1;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const ds=d.toISOString().split('T')[0];
     const sp=(S.tx||[]).filter(t=>t.date===ds&&t.amount<0&&(U.anCat?t.cat===U.anCat:true)).reduce((s,t)=>s+Math.abs(t.amount),0);
@@ -1981,7 +2019,7 @@ function rBudPage(){
 function rRecPage(){
   const el=document.getElementById('rec-list');
   if(!S.recurring.length){el.innerHTML=`<div class="empty"><div class="empty-i">🔄</div><div class="empty-t">Sin pagos recurrentes.<br>Añade suscripciones o pagos fijos.</div></div>`;return;}
-  const now=new Date();
+  const now=activeDate();
   el.innerHTML='<div style="height:8px"></div>'+S.recurring.map(r=>{
     const c=catOf(r.cat);
     const next=new Date(now.getFullYear(),now.getMonth(),r.day);
@@ -2038,7 +2076,7 @@ function fcSpent(f){
   }).reduce((s,t)=>s+Math.abs(t.amount),0);
 }
 function budSpent(b){
-  const now=new Date();
+  const now=activeDate();
   return (S.tx||[]).filter(t=>{
     if(t.amount>=0)return false;
     const d=new Date((t.date||'').slice(0,10)+'T12:00:00');
@@ -2281,6 +2319,44 @@ function parseCSVLine(line){
   }
   result.push(cur);
   return result;
+}
+function shiftActiveMonth(dir){
+  const now=new Date();
+  // Start from current active or real month
+  let m=S.activeMonth!=null?S.activeMonth:now.getMonth();
+  let y=S.activeYear!=null?S.activeYear:now.getFullYear();
+  m+=dir;
+  if(m>11){m=0;y++;}
+  if(m<0){m=11;y--;}
+  // If back to real month, clear
+  if(m===now.getMonth()&&y===now.getFullYear()){
+    S.activeMonth=null; S.activeYear=null;
+  } else {
+    S.activeMonth=m; S.activeYear=y;
+  }
+  saveS();
+  updateActiveMonthUI();
+  renderPage(U.page);
+}
+function resetActiveMonth(){
+  S.activeMonth=null; S.activeYear=null;
+  saveS();
+  updateActiveMonthUI();
+  renderPage(U.page);
+}
+function updateActiveMonthUI(){
+  const lbl=document.getElementById('active-month-lbl');
+  const btn=document.getElementById('btn-reset-month');
+  if(!lbl) return;
+  if(isActiveMonthToday()){
+    lbl.textContent='Mes actual — '+MOS[new Date().getMonth()]+' '+new Date().getFullYear();
+    lbl.style.color='';
+    if(btn) btn.style.display='none';
+  } else {
+    lbl.textContent='▶ '+MOS[S.activeMonth]+' '+S.activeYear;
+    lbl.style.color='var(--acc)';
+    if(btn) btn.style.display='inline-block';
+  }
 }
 function saveMonthlyBudget(val){
   S.monthlyBudget=parseFloat(val)||0;
