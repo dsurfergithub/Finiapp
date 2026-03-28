@@ -504,7 +504,10 @@ body::before{content:'';position:fixed;inset:0;z-index:1;pointer-events:none;opa
   </div>
   <div class="sec-lbl" style="padding:14px 20px 0">Presupuesto mensual</div>
   <div style="margin:8px 20px;background:var(--surf);border-radius:14px;border:1px solid var(--brd);padding:16px 18px">
-    <div style="font-size:12px;color:var(--t3);margin-bottom:10px;font-style:italic">¿Cuánto puedes gastar este mes?</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:12px;color:var(--t3);font-style:italic">Presupuesto para</div>
+      <div style="font-size:13px;font-weight:600;color:var(--acc)" id="budget-month-lbl">—</div>
+    </div>
     <div style="display:flex;align-items:center;gap:8px">
       <span style="font-size:20px;color:var(--t2);font-family:'DM Mono',monospace;font-weight:300">€</span>
       <input type="number" id="s-monthly-budget" class="fi" placeholder="0,00" step="0.01" min="0"
@@ -847,7 +850,7 @@ const FREQS={monthly:'Mensual',yearly:'Anual',weekly:'Semanal'};
 // STATE
 // ═══════════════════════════════════════════════════
 function loadS(){
-  const empty={tx:[],accounts:[],budgets:[],fc:[],savings:[],goals:[],recurring:[],theme:'light',acc:{h:'#c9963a',r:201,g:150,b:58},monthlyBudget:0,customCats:[],hiddenCats:[],activeMonth:null,activeYear:null};
+  const empty={tx:[],accounts:[],budgets:[],fc:[],savings:[],goals:[],recurring:[],theme:'light',acc:{h:'#c9963a',r:201,g:150,b:58},monthlyBudget:0,monthlyBudgets:{},customCats:[],hiddenCats:[],activeMonth:null,activeYear:null};
   try{
     const raw=localStorage.getItem('finni_v4');
     if(!raw) return empty;
@@ -970,7 +973,7 @@ function renderPage(n){
   if(n==='home'){rHero();rAlerts();rHomeFc();rHomeTx();}
   else if(n==='analytics') rAnalytics();
   else if(n==='more'){
-    const inp=document.getElementById('s-monthly-budget');if(inp)inp.value=S.monthlyBudget>0?S.monthlyBudget:'';
+    updateBudgetInput();
     updateActiveMonthUI();
   }
   else if(n==='forecasts') rFcPage();
@@ -1515,7 +1518,7 @@ function setPer(el,p){
 // ═══════════════════════════════════════════════════
 function rHero(){
   const now=activeDate();
-  const base=Number(S.monthlyBudget||0);
+  const base=Number(getActiveBudget()||0);
 
   // Gastos reales del mes
   const mTx=(S.tx||[]).filter(t=>{
@@ -2336,13 +2339,25 @@ function shiftActiveMonth(dir){
   }
   saveS();
   updateActiveMonthUI();
+  updateBudgetInput();
   renderPage(U.page);
 }
 function resetActiveMonth(){
   S.activeMonth=null; S.activeYear=null;
   saveS();
   updateActiveMonthUI();
+  updateBudgetInput();
   renderPage(U.page);
+}
+function updateBudgetInput(){
+  const inp=document.getElementById('s-monthly-budget');
+  if(!inp) return;
+  const v=getActiveBudget();
+  inp.value=v>0?v:'';
+  // Update label to show which month this budget applies to
+  const d=activeDate();
+  const lbl=document.getElementById('budget-month-lbl');
+  if(lbl) lbl.textContent=`${MOS[d.getMonth()]} ${d.getFullYear()}`;
 }
 function updateActiveMonthUI(){
   const lbl=document.getElementById('active-month-lbl');
@@ -2358,8 +2373,30 @@ function updateActiveMonthUI(){
     if(btn) btn.style.display='inline-block';
   }
 }
+function activeMonthKey(m,y){
+  const d=activeDate();
+  return `${y!=null?y:d.getFullYear()}-${String(m!=null?m:d.getMonth()).padStart(2,'0')}`;
+}
+function getActiveBudget(){
+  if(!S.monthlyBudgets) S.monthlyBudgets={};
+  const key=activeMonthKey();
+  if(S.monthlyBudgets[key]!=null) return S.monthlyBudgets[key];
+  // Fallback: look back up to 3 months for a configured budget
+  const d=activeDate();
+  for(let i=1;i<=3;i++){
+    let m=d.getMonth()-i, y=d.getFullYear();
+    if(m<0){m+=12;y--;}
+    const k=activeMonthKey(m,y);
+    if(S.monthlyBudgets[k]>0) return S.monthlyBudgets[k];
+  }
+  // Legacy: if old flat value exists, use it
+  return S.monthlyBudget||0;
+}
 function saveMonthlyBudget(val){
-  S.monthlyBudget=parseFloat(val)||0;
+  if(!S.monthlyBudgets) S.monthlyBudgets={};
+  const v=parseFloat(val)||0;
+  S.monthlyBudgets[activeMonthKey()]=v;
+  S.monthlyBudget=v; // keep legacy in sync
   saveS(); rHero();
 }
 function clearData(){
